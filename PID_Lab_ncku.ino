@@ -35,6 +35,12 @@ double error;
 // Prevent Quick Oscillation
 double prevOutput=0, oscGap = 100;
 
+// Command Parser
+#define BUFSIZE
+char inputBuffer[BUFSIZE];
+boolean CheckSerial();
+int serialIndex;
+
 void setup()
 {
   // initialize seiral communication
@@ -75,10 +81,10 @@ void loop()
 
     // Read rotation speed from Encoder
     Input = Motor.getSpeedRPS();
-   // Serial.print("Motor SpeedRPS: ");
- //   Serial.println(Input);
+    
     // Error
     error = abs(Setpoint - Input);
+
     /*
     if (abs(error) < tol) {
         PID_Controller.SetTunings(consKp, consKi, consKd);
@@ -88,13 +94,15 @@ void loop()
 
     // PID Compute
     PID_Controller.Compute();
+    /*
     if ((Output-prevOutput) >= oscGap) {
       //Output = prevOutput;
     }
+    */
+
     Motor.setSpeed(Output);
     prevOutput = Output;
     // Show Data
-    /*
     Serial.print("Input: ");
     Serial.println(Input);
     Serial.print("Setpoint: "); 
@@ -102,10 +110,39 @@ void loop()
     Serial.print("Error: ");
     Serial.println(error);
     Serial.print("Output: "); 
-    Serial.println(Output);*/
-        Serial.println(error);
+    Serial.println(Output);
+    Serial.println(error);
+
     // wait a little while
     delay(5);
 }
+
+/*
+Checks the serial input for a string, returns true once a '\n' is seen
+users can always look at the global variable "serialIndex" to see if characters have been received already
+*/
+boolean CheckSerial()
+{
+  boolean lineFound = false;
+  // if there's any serial available, read it:
+  while (Serial.available() > 0) {
+    //Read a character as it comes in:
+    //currently this will throw away anything after the buffer is full or the \n is detected
+    char charBuffer = Serial.read(); 
+      if (charBuffer == '\n') {
+           inputBuffer[serialIndex] = 0; // terminate the string
+           lineFound = (serialIndex > 0); // only good if we sent more than an empty line
+           serialIndex=0; // reset for next line of data
+         }
+         else if(charBuffer == '\r') {
+           // Just ignore the Carrage return, were only interested in new line
+         }
+         else if(serialIndex < BUFSIZE && lineFound == false) {
+           /*Place the character in the string buffer:*/
+           inputBuffer[serialIndex++] = charBuffer; // auto increment index
+         }
+  }// End of While
+  return lineFound;
+}// End of CheckSerial()
 
 

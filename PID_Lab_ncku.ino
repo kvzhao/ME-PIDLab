@@ -14,15 +14,27 @@
 #include <PID_v1.h>
 
 
-//Define Variables we'll be connecting to
+// Controlling Target
 double Setpoint, Input, Output;
 
-//Define the aggressive and conservative Tuning Parameters
-int SamplingTime =100;  // Execute each 100 msec
-double aggKp=10, aggKi=5, aggKd=2;
-double Kp=98, Ki=8, Kd=5;
-double tol = 2;
+// PID Paremeters and Performance Index
+int SamplingTime =50;  // Execute each 100 msec
+double Kp=100, Ki=20, Kd=5;
+// If the error within the band, the current time is Settling time
+double errorBand = 0.02; // 2%
+/*
+ * -- Definition --
+ * Rise Time: time duration from 10% to 90% of final value
+ * Settling Time: time to approach the final value (within the error band)
+ * Time Constant: when output value approaches 63.2% of desired value
+ */
+double RiseTime, SettlingTime;
+// Estimate PID
+double error;
+// Prevent Quick Oscillation
+double prevOutput=0, oscGap = 100;
 
+// Pins of Encoder
 const uint8_t encoderPinA = 18, encoderPinB =19;
 
 // Specify the links and initial tuning parameters
@@ -30,14 +42,9 @@ PID PID_Controller(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 // Init the DC Motor
 DCMotorIG42 Motor(encoderPinA, encoderPinB, 1);
 
-// Estimate PID
-double error;
-// Prevent Quick Oscillation
-double prevOutput=0, oscGap = 100;
-
 // Command Parser
-#define BUFSIZE
-char inputBuffer[BUFSIZE];
+#define BUFSIZE 32
+char commandBuffer[BUFSIZE];
 boolean CheckSerial();
 int serialIndex;
 
@@ -49,12 +56,13 @@ void setup()
   //initialize the variables we're linked to
   Input = 0;
   Output = 0;
-  Setpoint = 1.8;
+  Setpoint = 1.5;
 
   Serial.println("set PID mode");
   //turn the PID on
   PID_Controller.SetMode(AUTOMATIC);
   PID_Controller.SetOutputLimits(0,400);
+  PID_Controller.SetSampleTime(SamplingTime);
   Serial.println("motor driver init done");
 
   /* The Debug Section */
@@ -63,58 +71,83 @@ void setup()
   Motor.RunTest();
   Motor.stop();
 */
-  /* DC motor need pre-running to save set-up time */
-  Serial.println("motor pre-running");
-  Output = 45;
-  Motor.setSpeed(Output);
-  delay(1500);
-  Serial.println("<-- Enter Control Systme -->");
 }
 
 void loop()
 {
-    // Run a period to estimate more precise speed
-    Motor.Tick();
-    // Run for one Second
-    delay(SamplingTime);
-    Motor.Tock();
-
-    // Read rotation speed from Encoder
-    Input = Motor.getSpeedRPS();
+    boolean settingDone = false;
+    /* Head Section: Commnand Parse and Parameters Setting */
+    Serial.print("PID parameters: Kp = "); Serial.print(Kp);
+    Serial.print(", Ki = "); Serial.print(Ki); 
+    Serial.print(", Kd = "); Serial.print(Kd);
+    Serial.println(")");
+    Serial.println("Please Enter which you modify"); 
     
-    // Error
-    error = abs(Setpoint - Input);
+    while (!settingDone) {
 
-    /*
-    if (abs(error) < tol) {
-        PID_Controller.SetTunings(consKp, consKi, consKd);
-    } else {
-        PID_Controller.SetTunings(aggKp, aggKi, aggKd);
-    }*/
-
-    // PID Compute
-    PID_Controller.Compute();
-    /*
-    if ((Output-prevOutput) >= oscGap) {
-      //Output = prevOutput;
+        if(CheckSerial()) {
+            if (strcmp(commandBuffer, "kp") == 0) {
+                Serial.print("Kp = ");
+                double input = Serial.read();
+                PID_Controller.SetTunings(input, Ki, Kd);
+            } 
+        }
     }
-    */
 
-    Motor.setSpeed(Output);
-    prevOutput = Output;
-    // Show Data
-    Serial.print("Input: ");
-    Serial.println(Input);
-    Serial.print("Setpoint: "); 
-    Serial.println(Setpoint);    
-    Serial.print("Error: ");
-    Serial.println(error);
-    Serial.print("Output: "); 
-    Serial.println(Output);
-    Serial.println(error);
+    /* Second part: Start Running */
+    unsigned long LoopRunStart =0, LoopRunEnd=0, LoopRunDuration=0;
+    LoopRunStart = millis(); // Loop Tick
 
-    // wait a little while
-    delay(5);
+    // Test: counter
+    unsigned long loop_counter = 0;
+
+  /* DC motor need pre-running to save set-up time */
+  Serial.println("motor pre-running");
+  Output = 20;
+  Motor.setSpeed(Output);
+  delay(100);
+  Serial.println("<-- Enter Control Systme -->");
+
+    /* loop stop when control success or spend too much time */
+    while ( error <= errorBand || LoopRunDuration <= 50000) {   
+	    // Run a period to estimate more precise speed
+	    Motor.Tick();
+	    // Run for one Second
+	    delay(SamplingTime);
+	    Motor.Tock();
+
+	    // Read rotation speed from Encoder
+	    Input = Motor.getSpeedRPS();
+	    
+	    // Error
+	    error = abs(Setpoint - Input) / Setpoint; // in percentage
+        if (error <= errorBand) {
+            SettlingTime = LoopRunDuration; 
+            break;
+        }
+
+	    // PID Compute
+	    PID_Controller.Compute();
+
+	    Motor.setSpeed(Output);
+	    prevOutput = Output;
+
+        // Show error values
+	    Serial.println(error);
+
+	    // wait a little while
+	    delay(5);
+        LoopRunEnd = millis(); // current time
+        LoopRunDuration = LoopRunEnd - LoopRunStart;
+        loop_counter++;
+    } // End of while(duration) 
+    Motor.stop();
+    Serial.println("You complete the velocity controlling!");
+    // Maybe Do some analysis
+    // Maybe show the Total Result and Estimation
+    Serial.print("  *This Run execute "); Serial.print(loop_counter); Serial.println(" times");
+    Serial.print("  *The Settling Time is "); Serial.print(SettlingTime/1000.0); Serial.println(" sec");
+    delay(5000);
 }
 
 /*
@@ -129,8 +162,9 @@ boolean CheckSerial()
     //Read a character as it comes in:
     //currently this will throw away anything after the buffer is full or the \n is detected
     char charBuffer = Serial.read(); 
+    Serial.print(charBuffer);
       if (charBuffer == '\n') {
-           inputBuffer[serialIndex] = 0; // terminate the string
+           commandBuffer[serialIndex] = 0; // terminate the string
            lineFound = (serialIndex > 0); // only good if we sent more than an empty line
            serialIndex=0; // reset for next line of data
          }
@@ -139,7 +173,7 @@ boolean CheckSerial()
          }
          else if(serialIndex < BUFSIZE && lineFound == false) {
            /*Place the character in the string buffer:*/
-           inputBuffer[serialIndex++] = charBuffer; // auto increment index
+           commandBuffer[serialIndex++] = charBuffer; // auto increment index
          }
   }// End of While
   return lineFound;

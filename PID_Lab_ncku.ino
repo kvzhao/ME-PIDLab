@@ -82,7 +82,7 @@ void loop()
     Serial.print(", Kd = "); Serial.print(Kd);
     Serial.println(")");
     Serial.println("Please Enter which you modify"); 
-    
+   /* 
     while (!settingDone) {
 
         if(CheckSerial()) {
@@ -93,6 +93,7 @@ void loop()
             } 
         }
     }
+    */
 
     /* Second part: Start Running */
     unsigned long LoopRunStart =0, LoopRunEnd=0, LoopRunDuration=0;
